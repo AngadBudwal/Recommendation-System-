@@ -162,46 +162,39 @@ print("Model Comparison based on Accuracy:")
 print(model_comparison)
 
 
-# Step 2: Define function to check if predicted product belongs to the correct category
-check_category_match <- function(predicted_product, actual_product, category_mapping) {
-  # Map the predicted product to its category
-  predicted_category <- category_mapping[predicted_product]
-  
-  # Map the actual product to its category
-  actual_category <- category_mapping[actual_product]
-  
-  # Return TRUE if the predicted product belongs to the same category as the actual product
-  return(predicted_category == actual_category)
-}
-
-# Step 3: Create a mapping of products to their categories
-category_mapping <- train_data %>% 
+# Create a distinct mapping of product names to product categories
+category_mapping <- train_data %>%
   select(PROD_NAME, PROD_CATEGORY) %>%
   distinct() %>%
   deframe()  # Convert to a named vector where PROD_NAME is the name, and PROD_CATEGORY is the value
 
-# Step 4: Train the Random Forest model on all features (with a refined selection of features)
-rf_model_all_features <- randomForest(PROD_NAME ~ PH_OCC + PH_EDUCATION + INS_QS + PPC + Prosperity,
-                                      data = train_data,
-                                      ntree = 100,
-                                      importance = TRUE)
-
-# Step 5: Make predictions on the test data
-rf_all_features_predictions <- predict(rf_model_all_features, newdata = test_data)
-
-# Step 6: Compare if the predicted product category matches the actual product category
-correct_category_matches <- mapply(check_category_match, 
-                                   predicted_product = rf_all_features_predictions, 
-                                   actual_product = test_data$PROD_NAME, 
-                                   MoreArgs = list(category_mapping = category_mapping))
-
-# Step 7: Calculate the accuracy of category matching
-category_accuracy <- mean(correct_category_matches) * 100
-print(paste("Category Prediction Accuracy:", round(category_accuracy, 2), "%"))
-
-# Step 8: Create the Shiny app for interaction
-ui <- fluidPage(
+# Define a function to check if the predicted product's category matches the actual product's category
+check_category_match <- function(predicted_product, actual_product, category_mapping) {
+  # Get the predicted and actual categories from the mapping
+  predicted_category <- category_mapping[predicted_product]
+  actual_category <- category_mapping[actual_product]
   
+  # Return TRUE if the categories match
+  return(predicted_category == actual_category)
+}
+
+# Make predictions on the test data
+rf_predictions <- predict(rf_model_refined, newdata = test_data)
+
+# Compare if the predicted product category matches the actual product category
+category_matches <- mapply(check_category_match, 
+                           predicted_product = rf_predictions, 
+                           actual_product = test_data$PROD_NAME, 
+                           MoreArgs = list(category_mapping = category_mapping))
+
+# Calculate the accuracy of category matching
+category_accuracy <- mean(category_matches) * 100
+print(paste("Category-based accuracy:", round(category_accuracy, 2), "%"))
+
+
+# ---- Shiny App ----
+
+ui <- fluidPage(
   # Application title
   titlePanel("Insurance Policy Category Prediction System"),
   
@@ -226,28 +219,32 @@ ui <- fluidPage(
   )
 )
 
-# Server logic for Shiny app
+# Define server logic 
 server <- function(input, output) {
   
   observeEvent(input$recommend, {
+    
+    # Create a customer profile based on input
     customer_profile <- data.frame(PH_OCC = factor(input$PH_OCC, levels = levels(train_data$PH_OCC)),
                                    PH_EDUCATION = factor(input$PH_EDUCATION, levels = levels(train_data$PH_EDUCATION)),
                                    INS_QS = input$INS_QS,
                                    PPC = input$PPC,
                                    Prosperity = input$Prosperity)
     
-    # Predict product
-    predicted_product <- predict(rf_model_all_features, newdata = customer_profile)
+    # Predict product category
+    predicted_product <- predict(rf_model_refined, newdata = customer_profile)
     
-    # Get predicted product's category
+    # Use category mapping to get the predicted product's category
     predicted_category <- category_mapping[predicted_product]
     
+    # Display the predicted product category
     output$predicted_category <- renderText({
       paste("The predicted insurance product category is:", predicted_category)
     })
     
+    # Display feature importance
     output$feature_importance <- renderPlot({
-      varImpPlot(rf_model_all_features)
+      varImpPlot(rf_model_refined)
     })
   })
 }
@@ -255,10 +252,24 @@ server <- function(input, output) {
 # Run the Shiny app
 shinyApp(ui = ui, server = server)
 
-# Step 9: Final Confusion Matrix for accuracy comparison
-rf_conf_matrix <- confusionMatrix(rf_all_features_predictions, test_data$PROD_NAME)
-rf_final_accuracy <- rf_conf_matrix$overall["Accuracy"]
-print(paste("Final Model Accuracy on Product Prediction:", round(rf_final_accuracy * 100, 2), "%"))
 
-# Step 10: Print the accuracy of category-based matching
-print(paste("Final Model Accuracy on Product Category:", round(category_accuracy, 2), "%"))
+# Calculate and print the final model accuracy based on product category
+rf_final_accuracy_category <- category_accuracy / 100  # Use the original accuracy
+print(paste("Final Model Accuracy on Product Category:", round(rf_final_accuracy_category * 100, 2), "%"))
+
+model_comparison <- data.frame(
+  Model = c("Category Based Random Forest", "KNN", "Decision Tree"),
+  Accuracy = c(rf_final_accuracy_category, knn_accuracy, dt_accuracy)
+)
+
+print("Model Comparison based on Accuracy:")
+print(model_comparison)
+
+
+# Convert the confusion matrix to a table for visualization
+ggplot(as.data.frame(rf_conf_matrix_category$table), aes(Reference, Prediction)) +
+  geom_tile(aes(fill = Freq), color = "white") +
+  scale_fill_gradient(low = "lightblue", high = "blue") +
+  labs(title = "Confusion Matrix: Product Categories", x = "Actual Category", y = "Predicted Category") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
